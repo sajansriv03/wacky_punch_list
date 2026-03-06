@@ -76,10 +76,25 @@ export default function App() {
   const [wildcardChoice, setWildcardChoice] = useState(null);
   const [hoveredTileIndex, setHoveredTileIndex] = useState(null);
   const [viewedPlayerName, setViewedPlayerName] = useState('');
+  const [votePanelPosition, setVotePanelPosition] = useState({ x: null, y: null });
+  const [gameOverPanelPosition, setGameOverPanelPosition] = useState({ x: null, y: null });
+  const [activeDragPanel, setActiveDragPanel] = useState(null);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   
   const boardRef = useRef(null);
   const roomRef = useRef(null);
   const voteRevealTimerRef = useRef(null);
+
+  const getRemainingPointsByBuilding = (boardState) => {
+    const remaining = Object.fromEntries(BUILDING_TYPES.map((building) => [building, 0]));
+    Object.entries(BUILDINGS).forEach(([key, building]) => {
+      const [c, r] = key.split(',').map(Number);
+      if (!boardState[r][c].covered) {
+        remaining[building.type] += building.points;
+      }
+    });
+    return remaining;
+  };
 
   // Generate or retrieve player ID
   useEffect(() => {
@@ -697,8 +712,7 @@ export default function App() {
   useEffect(() => {
     if (!gameState?.pendingVote || !gameState?.voteRevealStartedAt) return;
 
-    const elapsed = Date.now() - gameState.voteRevealStartedAt;
-    const delay = Math.max(0, 3000 - elapsed);
+    const delay = 3000;
     if (voteRevealTimerRef.current) clearTimeout(voteRevealTimerRef.current);
 
     voteRevealTimerRef.current = setTimeout(() => {
@@ -709,6 +723,27 @@ export default function App() {
       if (voteRevealTimerRef.current) clearTimeout(voteRevealTimerRef.current);
     };
   }, [gameState?.pendingVote, gameState?.voteRevealStartedAt]);
+
+  useEffect(() => {
+    if (!activeDragPanel) return;
+
+    const onMove = (e) => {
+      if (activeDragPanel === 'vote') {
+        setVotePanelPosition({ x: e.clientX - dragOffset.x, y: e.clientY - dragOffset.y });
+      } else if (activeDragPanel === 'gameOver') {
+        setGameOverPanelPosition({ x: e.clientX - dragOffset.x, y: e.clientY - dragOffset.y });
+      }
+    };
+
+    const onUp = () => setActiveDragPanel(null);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [activeDragPanel, dragOffset]);
 
   const copyRoomLink = () => {
     const link = `${window.location.origin}${window.location.pathname}?room=${roomId}`;
@@ -875,15 +910,27 @@ export default function App() {
   const voteSubmitted = gameState.voteSubmitted || {};
   const allVotesSubmitted = gameState.pendingVote && players.every(p => voteSubmitted[p]);
   const myVoteSubmitted = myName ? !!voteSubmitted[myName] : false;
+  const remainingPointsByBuilding = getRemainingPointsByBuilding(gameState.board);
+  const lastPlacedTileIndex = placedTiles.length - 1;
+  const pendingVoteTrack = gameState.pendingVote?.move?.track;
+  const isViewingSelf = selectedPlayerName === myName;
+
+  const startPanelDrag = (event, panelName, panelPosition) => {
+    setActiveDragPanel(panelName);
+    setDragOffset({
+      x: event.clientX - (panelPosition.x ?? 0),
+      y: event.clientY - (panelPosition.y ?? 0)
+    });
+  };
 
   return (
-    <div style={{padding:'15px',background:'#F5DEB3',minHeight:'100vh'}}>
+    <div style={{padding:'10px 15px',background:'#F5DEB3',height:'100vh',overflow:'hidden',boxSizing:'border-box'}}>
       {/* Header */}
-      <div style={{marginBottom:'15px',background:'white',padding:'12px 20px',borderRadius:'10px'}}>
+      <div style={{marginBottom:'8px',background:'white',padding:'8px 16px',borderRadius:'10px'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'10px'}}>
           <div>
             <h2 style={{margin:0}}>Wacky Wacky West - Room {roomId}</h2>
-            <div style={{display:'flex',gap:'20px',marginTop:'8px',fontSize:'14px'}}>
+            <div style={{display:'flex',gap:'16px',marginTop:'4px',fontSize:'14px',alignItems:'center',flexWrap:'wrap'}}>
               <span>Current Turn: {currentPlayerName}</span>
               <span>Tiles: {(gameState.tiles[currentPlayerName] || []).length}</span>
               <span style={{fontWeight:'bold'}}>Your Score: {myName ? (gameState.scores[myName] ?? 15) : 15} points</span>
@@ -896,21 +943,22 @@ export default function App() {
               {players.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
-          
-          <div style={{display:'flex',gap:'5px',flexWrap:'wrap',maxWidth:'300px'}}>
-            {(gameState.votingCards[selectedPlayerName] || []).map(card => (
-              <div key={card} style={{width:'40px',height:'55px',border:'1px solid #ccc',borderRadius:'3px',overflow:'hidden'}}>
-                <img src={IMAGES[card]} style={{width:'100%',height:'100%',objectFit:'cover'}} alt={card}/>
+
+          <div style={{display:'flex',gap:'10px',flexWrap:'wrap',alignItems:'center'}}>
+            {BUILDING_TYPES.map((building) => (
+              <div key={`remaining-${building}`} style={{display:'flex',flexDirection:'column',alignItems:'center',background:'#faf6ef',border:'1px solid #dcc7a7',borderRadius:'6px',padding:'3px 6px',minWidth:'56px'}}>
+                <img src={IMAGES[building]} style={{width:'24px',height:'24px',objectFit:'contain'}} alt={`${building} icon`} />
+                <div style={{fontSize:'12px',fontWeight:'bold'}}>{remainingPointsByBuilding[building]}</div>
               </div>
             ))}
           </div>
         </div>
       </div>
 
-      <div style={{display:'flex',gap:'15px',flexWrap:'wrap'}}>
+      <div style={{display:'flex',gap:'15px',flexWrap:'wrap',height:'calc(100vh - 120px)'}}>
         {/* Board */}
-        <div style={{flex:'0 0 70%',minWidth:'600px'}}>
-          <div ref={boardRef} onDragOver={onDragOver} onDrop={onDrop} style={{background:'white',padding:'8px',borderRadius:'10px',position:'relative'}}>
+        <div style={{flex:'0 0 70%',minWidth:'600px',display:'flex'}}>
+          <div ref={boardRef} onDragOver={onDragOver} onDrop={onDrop} style={{background:'white',padding:'8px',borderRadius:'10px',position:'relative',width:'100%'}}>
             <img src={IMAGES.board} style={{width:'100%',display:'block',border:'3px solid #8B4513',borderRadius:'5px'}} alt=""/>
             <svg style={{position:'absolute',top:'8px',left:'8px',width:'calc(100% - 16px)',height:'calc(100% - 16px)',pointerEvents:'none'}} viewBox="0 0 2000 1426">
               {dragging && validMoves.map((m,i) => m.cells.map(([c,r],j) => {
@@ -945,59 +993,88 @@ export default function App() {
                 const adjustedRot = tile.rotation + 90;
                 const imageLayout = getTileImageLayout(x, y, w, h, adjustedRot);
                 return (
-                  <image 
-                    key={`tile-${idx}`} 
-                    x={imageLayout.x} 
-                    y={imageLayout.y} 
-                    width={imageLayout.width} 
-                    height={imageLayout.height} 
-                    href={IMAGES[tile.type]} 
-                    preserveAspectRatio="xMidYMid meet" 
-                    transform={`rotate(${adjustedRot} ${centerX} ${centerY})`}
-                    opacity={hoveredTileIndex === idx ? 0.4 : 1}
-                    style={{cursor: 'pointer', pointerEvents: 'all'}}
-                    onMouseEnter={() => setHoveredTileIndex(idx)}
-                    onMouseLeave={() => setHoveredTileIndex(null)}
-                  />
+                  <g key={`tile-${idx}`}>
+                    {idx === lastPlacedTileIndex && (
+                      <rect
+                        x={x + 8}
+                        y={y + 8}
+                        width={w - 16}
+                        height={h - 16}
+                        fill="none"
+                        stroke="#D7263D"
+                        strokeWidth="8"
+                        opacity="0.75"
+                        rx="18"
+                      />
+                    )}
+                    <image
+                      x={imageLayout.x}
+                      y={imageLayout.y}
+                      width={imageLayout.width}
+                      height={imageLayout.height}
+                      href={IMAGES[tile.type]}
+                      preserveAspectRatio="xMidYMid meet"
+                      transform={`rotate(${adjustedRot} ${centerX} ${centerY})`}
+                      opacity={hoveredTileIndex === idx ? 0.4 : 1}
+                      style={{cursor: 'pointer', pointerEvents: 'all'}}
+                      onMouseEnter={() => setHoveredTileIndex(idx)}
+                      onMouseLeave={() => setHoveredTileIndex(null)}
+                    />
+                  </g>
                 );
               })}
-              {Object.entries(gameState.workers || {}).filter(([, w]) => w && Number.isInteger(w.c) && Number.isInteger(w.r)).map(([n,w]) => <image key={n} x={V[w.c]+20} y={H[w.r]+20} width={V[w.c+1]-V[w.c]-40} height={H[w.r+1]-H[w.r]-40} href={IMAGES.worker} preserveAspectRatio="xMidYMid meet" style={{}}/>) }
+              {Object.entries(gameState.workers || {}).filter(([, w]) => w && Number.isInteger(w.c) && Number.isInteger(w.r)).map(([n,w]) => {
+                const width = V[w.c+1]-V[w.c]-40;
+                const height = H[w.r+1]-H[w.r]-40;
+                const x = V[w.c]+20;
+                const y = H[w.r]+20;
+                return (
+                  <g key={n}>
+                    {pendingVoteTrack === n && (
+                      <rect
+                        x={x - 12}
+                        y={y - 12}
+                        width={width + 24}
+                        height={height + 24}
+                        fill="none"
+                        stroke="#FF8C00"
+                        strokeWidth="10"
+                        opacity="0.75"
+                        rx="22"
+                      />
+                    )}
+                    <image x={x} y={y} width={width} height={height} href={IMAGES.worker} preserveAspectRatio="xMidYMid meet" style={{}}/>
+                  </g>
+                );
+              }) }
             </svg>
           </div>
         </div>
 
         {/* Sidebar */}
-        <div style={{flex:'0 0 28%',display:'flex',flexDirection:'column',gap:'10px',maxHeight:'85vh'}}>
-          {/* Secret Building - keep hidden when viewing other players during gameplay */}
-          {!gameState.gameEnded && (
-            <div style={{background:'white',padding:'10px',borderRadius:'10px'}}>
-              {selectedPlayerName === myName ? (
-                <>
-                  <h4 style={{margin:'0 0 8px 0',fontSize:'13px'}}>Your Secret: {gameState.secretBuildings[myName]?.replace(/_/g,' ')}</h4>
-                  <img src={IMAGES[gameState.secretBuildings[myName]]} style={{width:'100%',maxHeight:'100px',objectFit:'contain'}} alt=""/>
-                </>
-              ) : (
-                <>
-                  <h4 style={{margin:'0 0 8px 0',fontSize:'13px'}}>{selectedPlayerName}'s Secret</h4>
-                  <div style={{fontSize:'12px',color:'#666'}}>Hidden until the game ends.</div>
-                </>
-              )}
-            </div>
-          )}
+        <div style={{flex:'0 0 28%',display:'flex',flexDirection:'column',gap:'10px',height:'100%'}}>
+          <div style={{background:'white',padding:'10px',borderRadius:'10px',display:'flex',gap:'10px',alignItems:'stretch'}}>
+            {isViewingSelf ? (
+              <div style={{flex:'0 0 40%',border:'1px solid #ddd',borderRadius:'8px',padding:'8px',display:'flex',flexDirection:'column',justifyContent:'space-between'}}>
+                <h4 style={{margin:'0 0 6px 0',fontSize:'12px'}}>Your Secret</h4>
+                <div style={{fontSize:'11px',marginBottom:'4px'}}>{gameState.secretBuildings[myName]?.replace(/_/g,' ')}</div>
+                <img src={IMAGES[gameState.secretBuildings[myName]]} style={{width:'100%',maxHeight:'88px',objectFit:'contain'}} alt=""/>
+              </div>
+            ) : null}
 
-          {/* Game Over - Show all secrets */}
-          {gameState.gameEnded && (
-            <div style={{background:'white',padding:'10px',borderRadius:'10px',maxHeight:'200px',overflowY:'auto'}}>
-              <h4 style={{margin:'0 0 8px 0',fontSize:'13px'}}>Secret Buildings:</h4>
-              {players.map(p => (
-                <div key={p} style={{marginBottom:'10px',paddingBottom:'10px',borderBottom:'1px solid #eee'}}>
-                  <div style={{fontSize:'12px',fontWeight:'bold',marginBottom:'4px'}}>{p}</div>
-                  <div style={{fontSize:'11px',marginBottom:'4px'}}>{gameState.secretBuildings[p]?.replace(/_/g,' ')}</div>
-                  <img src={IMAGES[gameState.secretBuildings[p]]} style={{width:'100%',maxHeight:'60px',objectFit:'contain'}} alt=""/>
-                </div>
-              ))}
+            <div style={{flex:isViewingSelf ? 1 : '0 0 100%',border:'1px solid #ddd',borderRadius:'8px',padding:'8px'}}>
+              <h4 style={{margin:'0 0 6px 0',fontSize:'12px',textAlign: isViewingSelf ? 'left' : 'center'}}>
+                {selectedPlayerName}'s Voting Cards
+              </h4>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'5px'}}>
+                {(gameState.votingCards[selectedPlayerName] || []).map(card => (
+                  <div key={`${selectedPlayerName}-card-${card}`} style={{height:'52px',border:'1px solid #ccc',borderRadius:'3px',overflow:'hidden'}}>
+                    <img src={IMAGES[card]} style={{width:'100%',height:'100%',objectFit:'cover'}} alt={card}/>
+                  </div>
+                ))}
+              </div>
             </div>
-          )}
+          </div>
 
           {/* Current Player's Tiles */}
           <div style={{background:'white',padding:'10px',borderRadius:'10px',flex:1,display:'flex',flexDirection:'column',minHeight:0,overflow:'hidden'}}>
@@ -1057,8 +1134,14 @@ export default function App() {
 
       {/* Voting panel */}
       {gameState.pendingVote && !wildcardChoice && (
-        <div style={{position:'fixed',right:'20px',top:'120px',background:'white',padding:'20px',borderRadius:'15px',boxShadow:'0 4px 20px rgba(0,0,0,0.3)',zIndex:1000,maxHeight:'70vh',overflowY:'auto',width:'320px'}}>
-          <h3 style={{margin:'0 0 15px 0'}}>Outhouse - Vote!</h3>
+        <div style={{position:'fixed',left: votePanelPosition.x ?? (window.innerWidth - 360),top: votePanelPosition.y ?? 120,background:'white',padding:'20px',borderRadius:'15px',boxShadow:'0 4px 20px rgba(0,0,0,0.3)',zIndex:1000,maxHeight:'70vh',overflowY:'auto',width:'320px'}}>
+          <h3
+            onMouseDown={(e) => startPanelDrag(e, 'vote', { x: votePanelPosition.x ?? (window.innerWidth - 360), y: votePanelPosition.y ?? 120 })}
+            style={{margin:'0 0 15px 0',cursor:'move',userSelect:'none'}}
+            title="Drag to move"
+          >
+            Outhouse - Vote!
+          </h3>
           {!allVotesSubmitted ? (
             <>
               <div style={{marginBottom:'15px'}}>
@@ -1141,19 +1224,30 @@ export default function App() {
 
       {/* Game over */}
       {gameState.gameEnded && (
-        <div style={{position:'fixed',right:'20px',bottom:'20px',background:'rgba(255,255,255,0.96)',padding:'24px',borderRadius:'15px',textAlign:'center',maxWidth:'400px',zIndex:1000,boxShadow:'0 8px 25px rgba(0,0,0,0.3)'}}>
+        <div style={{position:'fixed',left: gameOverPanelPosition.x ?? (window.innerWidth - 500),top: gameOverPanelPosition.y ?? 170,background:'rgba(255,255,255,0.96)',padding:'24px',borderRadius:'15px',textAlign:'center',width:'470px',maxWidth:'90vw',zIndex:1000,boxShadow:'0 8px 25px rgba(0,0,0,0.3)'}}>
           <div>
-            <h1 style={{margin:'0 0 20px 0',color:'#FFD700'}}>Game Over!</h1>
+            <h1
+              onMouseDown={(e) => startPanelDrag(e, 'gameOver', { x: gameOverPanelPosition.x ?? (window.innerWidth - 500), y: gameOverPanelPosition.y ?? 170 })}
+              style={{margin:'0 0 20px 0',color:'#FFD700',cursor:'move',userSelect:'none'}}
+              title="Drag to move"
+            >
+              Game Over!
+            </h1>
             <h2 style={{margin:'0 0 30px 0'}}>{gameState.winner} Wins!</h2>
             {gameState.lastActionMessage && <div style={{fontSize:'13px',marginBottom:'14px',color:'#555'}}>{gameState.lastActionMessage}</div>}
             <div style={{marginBottom:'20px',fontSize:'18px',fontWeight:'bold'}}>
               Your Score: {myName ? (gameState.scores?.[myName] ?? 15) : 15} points
             </div>
-            <div style={{textAlign:'left',marginBottom:'18px',maxHeight:'160px',overflowY:'auto',padding:'10px',border:'1px solid #ddd',borderRadius:'8px'}}>
-              <div style={{fontWeight:'bold',marginBottom:'8px'}}>Final secrets:</div>
+            <div style={{textAlign:'left',marginBottom:'18px',maxHeight:'360px',overflowY:'auto',padding:'10px',border:'1px solid #ddd',borderRadius:'8px'}}>
+              <div style={{fontWeight:'bold',marginBottom:'10px'}}>Final cards and points:</div>
               {players.map(player => (
-                <div key={`final-${player}`} style={{fontSize:'13px',marginBottom:'6px'}}>
-                  {player}: {gameState.secretBuildings[player]?.replace(/_/g,' ')}
+                <div key={`final-${player}`} style={{fontSize:'13px',marginBottom:'12px',paddingBottom:'12px',borderBottom:'1px solid #eee',display:'flex',alignItems:'center',gap:'10px'}}>
+                  <img src={IMAGES[gameState.secretBuildings[player]]} style={{width:'78px',height:'108px',objectFit:'contain',border:'1px solid #bbb',borderRadius:'6px',background:'white'}} alt={gameState.secretBuildings[player]} />
+                  <div>
+                    <div style={{fontWeight:'bold'}}>{player}</div>
+                    <div style={{fontSize:'12px',color:'#555'}}>{gameState.secretBuildings[player]?.replace(/_/g,' ')}</div>
+                    <div style={{fontSize:'16px',fontWeight:'bold'}}>{gameState.scores?.[player] ?? 15} points</div>
+                  </div>
                 </div>
               ))}
             </div>
